@@ -58,20 +58,23 @@ void initialize(int*& data, int& N){
 int main(void)
 {
   int N = 1<<20;
-  int blockSize = 256;
+  int blockSize = 512;
   int numBlocks = 1;
 
   int *d_result = new int[blockSize*numBlocks];
   int *result = new int[blockSize*numBlocks];
-  int *x = new int[N];
+  int *data = new int[N];
+  int *d_data = new int[N];
 
-  initialize(x, N);
+  initialize(data, N);
 
   // Allocate Unified Memory – accessible from CPU or GPU
-  HANDLE_ERROR(cudaMalloc(&x, N*sizeof(int)));
+  HANDLE_ERROR(cudaMalloc(&d_data, N*sizeof(int)));
   HANDLE_ERROR(cudaMalloc(&d_result, blockSize*numBlocks*sizeof(int)));
+
+  cudaMemcpy(d_data, data, N * sizeof(int), cudaMemcpyHostToDevice);
   
-  countElem<<<numBlocks, blockSize>>>(N, 50,x, d_result);
+  countElem<<<numBlocks, blockSize>>>(N, 50,d_data, d_result);
 
   // Wait for GPU to finish before accessing on host
   HANDLE_ERROR(cudaDeviceSynchronize());
@@ -88,7 +91,7 @@ int main(void)
 
   // Free memory
   HANDLE_ERROR(cudaFree(d_result));
-  HANDLE_ERROR(cudaFree(x));
+  HANDLE_ERROR(cudaFree(d_data));
   
   return 0;
 }
