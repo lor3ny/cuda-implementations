@@ -2,6 +2,16 @@
 #include <math.h>
 #include <random>
 
+static void HandleError( cudaError_t err,
+                         const char *file,
+                         int line ) {
+    if (err != cudaSuccess) {
+        printf( "%s in %s at line %d\n", cudaGetErrorString( err ),
+                file, line );
+        exit( EXIT_FAILURE );
+    }
+}
+#define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
 
 
 __global__
@@ -45,15 +55,15 @@ int main(void)
   int *x = new int[N];
 
   // Allocate Unified Memory – accessible from CPU or GPU
-  cudaMallocManaged(&x, N*sizeof(int));
-  cudaMallocManaged(&result, blockSize*numBlocks*sizeof(int));
+  HANDLE_ERROR(cudaMallocManaged(&x, N*sizeof(int)));
+  HANDLE_ERROR(cudaMallocManaged(&result, blockSize*numBlocks*sizeof(int)));
 
   initialize(x, N);
   
   countElem<<<numBlocks, blockSize>>>(N, 50,x, result);
 
   // Wait for GPU to finish before accessing on host
-  cudaDeviceSynchronize();
+  HANDLE_ERROR(cudaDeviceSynchronize());
 
   int final_count = 0;
   for(int i = 0; i<blockSize; i++){
@@ -64,8 +74,8 @@ int main(void)
   std::cout << "Device variable value: " << final_count <<std::endl;
 
   // Free memory
-  cudaFree(result);
-  cudaFree(x);
+  HANDLE_ERROR(cudaFree(result));
+  HANDLE_ERROR(cudaFree(x));
   
   return 0;
 }
