@@ -1,7 +1,17 @@
 #include <iostream>
 #include <math.h>
 #include <random>
-#include <chrono>
+
+static void HandleError( cudaError_t err,
+                         const char *file,
+                         int line ) {
+    if (err != cudaSuccess) {
+        printf( "%s in %s at line %d\n", cudaGetErrorString( err ),
+                file, line );
+        exit( EXIT_FAILURE );
+    }
+}
+#define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
 
 
 __global__
@@ -47,62 +57,38 @@ void initialize(int*& data, int& N){
 
 int main(void)
 {
-
-
-  // DATA
   int N = 1<<20;
   int blockSize = 256;
   int numBlocks = 1;
-  int *data = new int[N];
-  int *d_result = new int[blockSize];
-  int *result = new int[blockSize];
-  bool is_gpu = true;
-  auto clock = std::chrono::high_resolution_clock();
 
-  initialize(data, N);
+  int *d_result = new int[blockSize*numBlocks];
+  int *result = new int[blockSize*numBlocks];
+  int *x = new int[N];
 
-  cudaMalloc(&data, N*sizeof(int));
-  cudaMalloc(&d_result, blockSize*sizeof(int));
+  initialize(x, N);
 
-  auto start = clock.now();
-
-  if(!is_gpu){
-
-    std::cout << "--- CPU computation ---" << std::endl;
-
-    int res = countElemCPU(N, 50, data);
-
-    std::cout << "Element count: " << N << std::endl;  
-    std::cout << "Device variable value: " << res <<std::endl;
-
-  } else {
-
-    std::cout << "--- GPU computation ---" << std::endl;
+  // Allocate Unified Memory – accessible from CPU or GPU
+  HANDLE_ERROR(cudaMalloc(&x, N*sizeof(int)));
+  HANDLE_ERROR(cudaMalloc(&d_result, blockSize*numBlocks*sizeof(int)));
   
-    countElem<<<numBlocks, blockSize>>>(N, 50, data, d_result);
+  countElem<<<numBlocks, blockSize>>>(N, 50,x, d_result);
 
-    cudaDeviceSynchronize();
+  // Wait for GPU to finish before accessing on host
+  HANDLE_ERROR(cudaDeviceSynchronize());
 
-    cudaMemcpy(result, d_result, blockSize*sizeof(int), cudaMemcpyDeviceToHost);
+  HANDLE_ERROR(cudaMemcpy(result, d_result, blockSize*numBlocks*sizeof(int), cudaMemcpyDeviceToHost));
 
-    int res = 0;
-    for(int i = 0; i<blockSize; i++){
-      res += result[i];
-    }
-
-    std::cout << "Element count: " << N << std::endl;  
-    std::cout << "Device variable value: " << res <<std::endl;
-
-    cudaFree(d_result);
-    cudaFree(data);
+  int final_count = 0;
+  for(int i = 0; i<blockSize; i++){
+    final_count += result[i];
   }
 
-  auto end = clock.now();
+  std::cout << "Element count: " << N << std::endl;  
+  std::cout << "Device variable value: " << final_count <<std::endl;
 
-  // GPU
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-  std::cout << "Time: " << duration.count() << "ms" << std::endl;
-
+  // Free memory
+  HANDLE_ERROR(cudaFree(d_result));
+  HANDLE_ERROR(cudaFree(x));
   
   return 0;
 }
