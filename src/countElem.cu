@@ -1,11 +1,11 @@
 #include <iostream>
 #include <math.h>
 #include <random>
-
+#include <chrono>
 
 
 __global__
-void countElem(int n, int find, int *data, int *result)
+void countElem(int n, int find, int *data, int *d_result)
 {
   int batch_size = n/blockDim.x;
   int start_index = threadIdx.x * batch_size;
@@ -18,7 +18,18 @@ void countElem(int n, int find, int *data, int *result)
     }
   }
 
-  result[threadIdx.x] = batch_count;
+  d_result[threadIdx.x] = batch_count;
+  //atomicAdd(result, batch_count);
+}
+
+int countElemCPU(int n, int find, int *data){
+  unsigned int total_count = 0;
+  for(int i = 0; i<n; i++){
+    if(data[i] == find){
+      total_count++;
+    }
+  }
+  return total_count;
 }
 
 void initialize(int*& data, int& N){
@@ -32,40 +43,66 @@ void initialize(int*& data, int& N){
     int random_number= distribution(gen);
     data[i] = random_number;
   }
-
 }
 
 int main(void)
 {
+
+
+  // DATA
   int N = 1<<20;
   int blockSize = 256;
   int numBlocks = 1;
+  int *data = new int[N];
+  int *d_result = new int[blockSize];
+  int *result = new int[blockSize];
+  bool is_gpu = true;
+  auto clock = std::chrono::high_resolution_clock();
 
-  int *result = new int[blockSize*numBlocks];
-  int *x = new int[N];
+  initialize(data, N);
 
-  // Allocate Unified Memory – accessible from CPU or GPU
-  cudaMallocManaged(&x, N*sizeof(int));
-  cudaMallocManaged(&result, blockSize*numBlocks*sizeof(int));
+  cudaMalloc(&data, N*sizeof(int));
+  cudaMalloc(&d_result, blockSize*sizeof(int));
 
-  initialize(x, N);
+  auto start = clock.now();
+
+  if(!is_gpu){
+
+    std::cout << "--- CPU computation ---" << std::endl;
+
+    int res = countElemCPU(N, 50, data);
+
+    std::cout << "Element count: " << N << std::endl;  
+    std::cout << "Device variable value: " << res <<std::endl;
+
+  } else {
+
+    std::cout << "--- GPU computation ---" << std::endl;
   
-  countElem<<<numBlocks, blockSize>>>(N, 50,x, result);
+    countElem<<<numBlocks, blockSize>>>(N, 50, data, d_result);
 
-  // Wait for GPU to finish before accessing on host
-  cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
 
-  int final_count = 0;
-  for(int i = 0; i<blockSize; i++){
-    final_count += result[i];
+    cudaMemcpy(result, d_result, blockSize*sizeof(int), cudaMemcpyDeviceToHost);
+
+    int res = 0;
+    for(int i = 0; i<blockSize; i++){
+      res += result[i];
+    }
+
+    std::cout << "Element count: " << N << std::endl;  
+    std::cout << "Device variable value: " << res <<std::endl;
+
+    cudaFree(d_result);
+    cudaFree(data);
   }
 
-  std::cout << "Element count: " << N << std::endl;  
-  std::cout << "Device variable value: " << final_count <<std::endl;
+  auto end = clock.now();
 
-  // Free memory
-  cudaFree(result);
-  cudaFree(x);
+  // GPU
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  std::cout << "Time: " << duration.count() << "ms" << std::endl;
+
   
   return 0;
 }
