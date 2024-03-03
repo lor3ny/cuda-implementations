@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <math.h>
 #include <curand.h>
@@ -19,18 +20,18 @@ static void HandleError( cudaError_t err,
 __global__
 void countElem(int n, int find, int *data, int *d_result)
 {
-  int batch_size = n/gridDim.x;
-  int idx = threadIdx.x + batch_size*blockIdx.x;
+  int batch_size = n/blockDim.x;
+  int start_index = threadIdx.x * batch_size;
 
   int batch_count = 0;
 
-  for(int i = idx; i<batch_size*(blockIdx.x+1); i+=blockDim.x){
+  for(int i = start_index; i<start_index+batch_size; i++){
     if(data[i] == find){
       batch_count++;
     }
   }
- 
-  atomicAdd(&d_result[blockIdx.x], batch_count);
+
+  atomicAdd(d_result, batch_count);
 }
 
 int countElemCPU(int n, int find, int *data){
@@ -44,10 +45,11 @@ int countElemCPU(int n, int find, int *data){
 }
 
 __global__
-void initialize(int* data, int N){
+void initialize(int* data, int N, int *d_result){
 
-  int idx = threadIdx.x+blockDim.x*blockIdx.x;
+  *d_result = 0;
 
+  int idx = threadIdx.x+blockDim.x*blockIdx.x;  
   for(int i = idx; i <  N; i += blockDim.x){
     data[i] = 50;
   }
@@ -61,31 +63,26 @@ int main(void)
 
   int N = 1<<29;
   int blockSize = 256;
-  int numBlocks = 8;
+  int numBlocks = 1;
 
-  int *d_result = new int[numBlocks];
-  int *result = new int[numBlocks];
+  int *d_result;
+  int *result = new int;
   int *data = new int[N];
   int *d_data = new int[N];
 
   HANDLE_ERROR(cudaMalloc(&d_data, N*sizeof(int)));
-  HANDLE_ERROR(cudaMalloc(&d_result, numBlocks*sizeof(int)));
+  HANDLE_ERROR(cudaMalloc(&d_result, sizeof(int)));
 
-  initialize<<<numBlocks, blockSize>>>(d_data, N);
+  initialize<<<8, 256>>>(d_data, N, d_result);
   
   countElem<<<numBlocks, blockSize>>>(N, 50,d_data, d_result);
 
   HANDLE_ERROR(cudaDeviceSynchronize());
 
-  HANDLE_ERROR(cudaMemcpy(result, d_result, numBlocks*sizeof(int), cudaMemcpyDeviceToHost));
-
-  int final_count = 0;
-  for(int i = 0; i<numBlocks; i++){
-    final_count += result[i];
-  }
+  HANDLE_ERROR(cudaMemcpy(result, d_result, sizeof(int), cudaMemcpyDeviceToHost));
 
   std::cout << "Element count: " << N << std::endl;  
-  std::cout << "Device variable value: " << final_count <<std::endl;
+  std::cout << "Device variable value: " << *result <<std::endl;
 
   // Free memory
   HANDLE_ERROR(cudaFree(d_result));
