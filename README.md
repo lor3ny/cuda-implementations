@@ -6,4 +6,8 @@ Parallel implementations and tests of searching algorithms using CUDA C++
 
 nvcc file.cu -o name
 
+## Dependencies
 
+CUDA-12
+
+MPI

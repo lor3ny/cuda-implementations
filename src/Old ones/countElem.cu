@@ -1,8 +1,8 @@
 #include <chrono>
-#include <ctime>
 #include <iostream>
 #include <math.h>
-#include <random>
+#include <curand.h>
+#include <curand_kernel.h>
 
 static void HandleError( cudaError_t err,
                          const char *file,
@@ -19,19 +19,18 @@ static void HandleError( cudaError_t err,
 __global__
 void countElem(int n, int find, int *data, int *d_result)
 {
-  int batch_size = n/blockDim.x;
-  int start_index = threadIdx.x * batch_size;
+  int batch_size = n/gridDim.x;
+  int idx = threadIdx.x + batch_size*blockIdx.x;
 
   int batch_count = 0;
 
-  for(int i = start_index; i<start_index+batch_size; i++){
+  for(int i = idx; i<batch_size*(blockIdx.x+1); i+=blockDim.x){
     if(data[i] == find){
       batch_count++;
     }
   }
-
-  d_result[threadIdx.x] = batch_count;
-  //atomicAdd(result, batch_count);
+ 
+  atomicAdd(&d_result[blockIdx.x], batch_count);
 }
 
 int countElemCPU(int n, int find, int *data){
@@ -54,37 +53,35 @@ void initialize(int* data, int N){
   }
 }
 
-
 int main(void)
 {
+
   auto clock = std::chrono::high_resolution_clock();
   auto start = clock.now();
 
-  int N = 1<<29;
+  int N = 1<<28;
   int blockSize = 256;
-  int numBlocks = 1;
+  int numBlocks = 8;
 
-  int *d_result = new int[blockSize*numBlocks];
+  int *d_result = new int[numBlocks];
+  int *result = new int[numBlocks];
+  int *data = new int[N];
   int *d_data = new int[N];
 
-  // Allocate Unified Memory – accessible from CPU or GPU
-  HANDLE_ERROR(cudaMallocManaged(&d_data, N*sizeof(int)));
-  HANDLE_ERROR(cudaMallocManaged(&d_result, blockSize*numBlocks*sizeof(int)));
+  HANDLE_ERROR(cudaMalloc(&d_data, N*sizeof(int)));
+  HANDLE_ERROR(cudaMalloc(&d_result, numBlocks*sizeof(int)));
 
-  initialize<<<8, 256>>>(d_data, N);
-
-  cudaMemcpy(d_data, d_data, N * sizeof(int), cudaMemcpyHostToDevice);
+  initialize<<<numBlocks, blockSize>>>(d_data, N);
   
   countElem<<<numBlocks, blockSize>>>(N, 50,d_data, d_result);
 
-  // Wait for GPU to finish before accessing on host
   HANDLE_ERROR(cudaDeviceSynchronize());
 
-  HANDLE_ERROR(cudaMemcpy(d_result, d_result, blockSize*numBlocks*sizeof(int), cudaMemcpyDeviceToHost));
+  HANDLE_ERROR(cudaMemcpy(result, d_result, numBlocks*sizeof(int), cudaMemcpyDeviceToHost));
 
   int final_count = 0;
-  for(int i = 0; i<blockSize; i++){
-    final_count += d_result[i];
+  for(int i = 0; i<numBlocks; i++){
+    final_count += result[i];
   }
 
   std::cout << "Element count: " << N << std::endl;  

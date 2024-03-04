@@ -1,9 +1,8 @@
 #include <chrono>
-#include <cstdint>
+#include <ctime>
 #include <iostream>
 #include <math.h>
-#include <curand.h>
-#include <curand_kernel.h>
+#include <random>
 
 static void HandleError( cudaError_t err,
                          const char *file,
@@ -31,7 +30,8 @@ void countElem(int n, int find, int *data, int *d_result)
     }
   }
 
-  atomicAdd(d_result, batch_count);
+  d_result[threadIdx.x] = batch_count;
+  //atomicAdd(result, batch_count);
 }
 
 int countElemCPU(int n, int find, int *data){
@@ -45,44 +45,50 @@ int countElemCPU(int n, int find, int *data){
 }
 
 __global__
-void initialize(int* data, int N, int *d_result){
+void initialize(int* data, int N){
 
-  *d_result = 0;
+  int idx = threadIdx.x+blockDim.x*blockIdx.x;
 
-  int idx = threadIdx.x+blockDim.x*blockIdx.x;  
   for(int i = idx; i <  N; i += blockDim.x){
     data[i] = 50;
   }
 }
 
+
 int main(void)
 {
-
   auto clock = std::chrono::high_resolution_clock();
   auto start = clock.now();
 
-  int N = 1<<29;
+  int N = 1<<28;
   int blockSize = 256;
   int numBlocks = 1;
 
-  int *d_result;
-  int *result = new int;
-  int *data = new int[N];
+  int *d_result = new int[blockSize*numBlocks];
   int *d_data = new int[N];
 
-  HANDLE_ERROR(cudaMalloc(&d_data, N*sizeof(int)));
-  HANDLE_ERROR(cudaMalloc(&d_result, sizeof(int)));
+  // Allocate Unified Memory – accessible from CPU or GPU
+  HANDLE_ERROR(cudaMallocManaged(&d_data, N*sizeof(int)));
+  HANDLE_ERROR(cudaMallocManaged(&d_result, blockSize*numBlocks*sizeof(int)));
 
-  initialize<<<8, 256>>>(d_data, N, d_result);
+  initialize<<<8, 256>>>(d_data, N);
+
+  cudaMemcpy(d_data, d_data, N * sizeof(int), cudaMemcpyHostToDevice);
   
   countElem<<<numBlocks, blockSize>>>(N, 50,d_data, d_result);
 
+  // Wait for GPU to finish before accessing on host
   HANDLE_ERROR(cudaDeviceSynchronize());
 
-  HANDLE_ERROR(cudaMemcpy(result, d_result, sizeof(int), cudaMemcpyDeviceToHost));
+  HANDLE_ERROR(cudaMemcpy(d_result, d_result, blockSize*numBlocks*sizeof(int), cudaMemcpyDeviceToHost));
+
+  int final_count = 0;
+  for(int i = 0; i<blockSize; i++){
+    final_count += d_result[i];
+  }
 
   std::cout << "Element count: " << N << std::endl;  
-  std::cout << "Device variable value: " << *result <<std::endl;
+  std::cout << "Device variable value: " << final_count <<std::endl;
 
   // Free memory
   HANDLE_ERROR(cudaFree(d_result));
