@@ -62,7 +62,7 @@ int main(void)
   int deviceCount;
   HANDLE_ERROR(cudaGetDeviceCount(&deviceCount));
 
-  if(deviceCount != 4){
+  if(deviceCount != 4 && deviceCount != 2){
     std::cerr << "GPUs available are: " << deviceCount << std::endl;
     if(deviceCount != 1){
       std::cerr << "Device count not suitable." << std::endl;
@@ -84,9 +84,12 @@ int main(void)
 
     //In this case we initialize the data so it's not necessary to divide the data
 
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
     HANDLE_ERROR(cudaSetDevice(gpuID));
-    HANDLE_ERROR(cudaMalloc(&d_data, batchN*sizeof(int)));
-    HANDLE_ERROR(cudaMalloc(&d_result, numBlocks*sizeof(int)));
+    HANDLE_ERROR(cudaMallocAsync(&d_data, batchN*sizeof(int), stream));
+    HANDLE_ERROR(cudaMallocAsync(&d_result, numBlocks*sizeof(int), stream));
 
     initialize<<<numBlocks, blockSize>>>(d_data, batchN);
   
@@ -99,12 +102,12 @@ int main(void)
       final_count += result[i];
     }
 
-    std::cout << "Element count: " << N << std::endl;  
+    std::cout << "Element count: " << batchN << std::endl;  
     std::cout << "Device variable value: " << final_count <<std::endl;
 
     // Free memory
-    HANDLE_ERROR(cudaFree(d_result));
-    HANDLE_ERROR(cudaFree(d_data));
+    HANDLE_ERROR(cudaFreeAsync(d_result, stream));
+    HANDLE_ERROR(cudaFreeAsync(d_data, stream));
 
     auto end = clock.now(); 
     long long microseconds = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
