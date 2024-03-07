@@ -3,7 +3,6 @@
 #include <math.h>
 #include <curand.h>
 #include <curand_kernel.h>
-#include <mpi.h>
 
 static void HandleError( cudaError_t err,
                          const char *file,
