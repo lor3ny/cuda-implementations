@@ -1,11 +1,15 @@
+#include <cstddef>
 #include <iostream>
 #include <map>
 #include <mpi.h>
 #include <vector>
+#include <random>
+#include <list>
+#include<cstdlib>
 
-#define N 1<<10
+#define N 20
 #define entryNode 0
-#define keyNode (N)-1
+#define endNode (N)-1
 
 using namespace std;
 
@@ -13,34 +17,26 @@ using namespace std;
 // NOTES
 /*
 - it is possible to parallelize the cicles with OpenMP? (if not, using CUDA)
-- every procs have their node queue or they share it?
 - nodeQueue insert at the start and remove from the end (FIFO)
-
 */
 
 
-void initializeMatrix(int (&matrix)[N][N], int n){
-
-    for(int i = 0; i<n; i++){
-        for(int j = 0; j<n; j++){
-            matrix[i][j] = 1;
-        }
-    }
-}
-
-bool Explore(int (&graph)[N][N], int selectedNode, vector<int>& nqueue, map<int, bool>& dmap){
-
+void initializeMatrix(int* data){
+    srand((unsigned) time(NULL));
     for(int i = 0; i<N; i++){
-
-        if(graph[selectedNode][i]==1 && dmap.find(i) == dmap.end()){
-            if(i == keyNode){
-                return true;
+        for(int j = 0; j<N; j++){
+            int random = 0 + (rand() % 10);
+            if(random < 1){
+                data[i*N + j] = 1;
+            } else {
+                data[i*N + j] = 0;
             }
-            nqueue.push_back(i);
+            cout << data[i*N + j];
         }
+        cout << endl;
     }
-    return false;
 }
+
 
 
 int main(int argc, char *argv[]){
@@ -53,79 +49,213 @@ int main(int argc, char *argv[]){
     MPI_Comm_size(MPI_COMM_WORLD, &procsCount);
     MPI_Comm_rank(MPI_COMM_WORLD, &procId);
 
-    int graph[N][N];
-    initializeMatrix(graph, N);
+    int graph[N*N];
 
-    int nextNode;
-    bool sigfound = false;
-    vector<int> nodeBuff;
-    map<int, bool> doneMap;
+    int startNode;
+    bool entryCheck = false;
+    bool endCheck = false;
+    int sigtermCheck = 0;
 
     if(procId == 0){
 
-        int elementsCount = 0;
-
-        // If the insertion is O(N) is important to initialize that at the beginning (lets see further)
-        doneMap.insert({entryNode,true});
-        sigfound = Explore(graph, entryNode, nodeBuff, doneMap);
-
-        while (!sigfound) {
-            //NOTES
-            /*
-            - I don't know if nodeBuff.data() for receiving works well, I have some doubts
-            - MPI_Gather preserve original content [:)]
-            - MPI_Gather elements count is per process, so this implementation can't work
-            */
-            if(/*is not the first time*/){
-                MPI_Reduce(nullptr, &elementsCount, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-                MPI_Gather(nullptr, 0, MPI_INT, nodeBuff.data(), elementsCount, MPI_INT, 0, MPI_COMM_WORLD);
+        //Maybe its better to choose in a more sparse way
+        int starters[procsCount];
+        for(int i = 0; i<procsCount; i++){
+            if(i == 0){
+                starters[i] = entryNode;
+                continue;
+            }
             
-                // Remove repetitions in buff
-                // todo
-            
-                // Remove visited nodes
-                vector<int> auxNode;
-                for (int i = 0; i<nodeBuff.size(); i++){
-                    if(doneMap.find(nodeBuff[i]) == doneMap.end()){
-                        auxNode.push_back(nodeBuff[i]);
-                    }
-                }
-                nodeBuff = auxNode;
+            if(i == procsCount-1){
+                starters[i] = endNode;
+                continue;
             }
 
-            // Update doneMap
-            for (int i = 0; i<nodeBuff.size(); i++){
-                if(doneMap.find(nodeBuff[i]) == doneMap.end()){
-                    doneMap.insert({nodeBuff[i], true});
-                }
+            starters[i] = i;
+        }
+        
+        //Send Entry Nodes
+        MPI_Scatter(starters, 1, MPI_INT, &startNode, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+        initializeMatrix(graph);
+        MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
+
+
+        entryCheck = true;
+
+        // BFS COMPUTATION
+        vector<int> path;
+        vector<bool> visited;
+        for (int i = 0; i < N; i++)
+            visited.push_back(false);
+
+        list<int> nodeQueue;
+
+        visited[startNode] = true;
+        nodeQueue.push_back(startNode);
+
+        list<int>::iterator i;
+
+        MPI_Request request;
+        MPI_Irecv(&sigtermCheck, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &request); 
+        
+        while (!endCheck) {
+
+            if(sigtermCheck){
+                break;
+            }  
+
+            if(nodeQueue.empty()){
+                break;
             }
 
-            // NOTES
-            /*
-            - we need to select better the destination processes 
-            - the nodeBuff is reverse iterated to allow the pop_back() usage, but doing that it becomes LIFO, we need a FIFO implementation
-            */
-            int batchcount = procsCount;
-            if(nodeBuff.size()<procsCount){
-                batchcount = nodeBuff.size();
+            int currVertex = nodeQueue.front();
+            nodeQueue.pop_front();
+
+            path.push_back(currVertex);
+
+            for (int i = 0; i< N; ++i) {
+
+                int value = graph[currVertex*N + i];
+                if(i == endNode && value == 1){
+                    endCheck = true;
+                    currVertex = i;
+                    path.push_back(currVertex);
+                    break;
+                }
+
+                if (value == 1 && !visited[i]) {
+                    visited[i] = true;
+                    nodeQueue.push_back(i);
+                }
             }
-            for(int i = batchcount-1; i > 0; i--){
-                MPI_Send(&nodeBuff[i], 1, MPI_INT, i, 0, MPI_COMM_WORLD);
-                nodeBuff.pop_back();
-            }
+        }
+
+        //Send completition
+        if(endCheck){
+            sigtermCheck = 1;
+            MPI_Bcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        }
+
+        cout << procId << " start node: " << startNode << " endcheck: " << endCheck << " startcheck: "<< entryCheck << " visited:";
+        for (int i = 0; i < path.size(); i++) {
+            cout << path[i] << " - ";
         }   
+        cout << endl;
 
     } else {
 
-        // Node receiveing (recv)
-        // Analyses of the received node to find outcome nodes
-        // Send back the outcome nodes
+        // INITIALIZATION
 
-    }
+        // Recv entry point
+        MPI_Scatter(nullptr, 0, MPI_INT, &startNode, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if(startNode == endNode){
+            endCheck = true;
+        }
+
+        // Recv the matrix
+        MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
+
+        // BFS Computation
+        vector<int> path;
+        vector<bool> visited;
+        for (int i = 0; i < N; i++)
+            visited.push_back(false);
+
+        list<int> nodeQueue;
+
+        visited[startNode] = true;
+        nodeQueue.push_back(startNode);
+
+        list<int>::iterator i;
+
+        MPI_Request request;
+        MPI_Ibcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD, &request); 
+
+        int checkPass = -1; 
+        
+        while (!endCheck || !entryCheck) {
+
+            if(sigtermCheck){
+                break;
+            }  
+
+            if(nodeQueue.empty()){
+                break;
+            }
+
+
+            int currVertex;
+            if(checkPass != -1){
+                currVertex = checkPass;
+                checkPass = -1;
+            } else {
+                currVertex = nodeQueue.front();
+                nodeQueue.pop_front();
+            }
+
+
+            // Verifica solo quando lo seleziona, ha senso verificarlo quando lo trova?
+
+            path.push_back(currVertex);
+
+            for (int i = 0; i< N; ++i) {
+
+                int value = graph[currVertex*N + i];
+
+
+                if(i == endNode && value == 1){
+                    if(entryCheck){
+                        endCheck = true;
+                        currVertex = i;
+                        path.push_back(i);
+                        break;
+                    } else {
+                        endCheck = true;
+                        visited[i] = true;
+                        checkPass = i;
+                        continue;
+                    }
+                }
+
+                if(i == entryNode && value == 1){
+                    if(endCheck){
+                        entryCheck = true;
+                        currVertex = i;
+                        path.push_back(i);
+                        break;
+                    } else {
+                        entryCheck = true;
+                        visited[i] = true;
+                        checkPass = i;
+                        continue;
+                    }
+                }
+
+                if (value == 1 && !visited[i]) {
+                    visited[i] = true;
+                    nodeQueue.push_back(i);
+                }
+            }
+        }
+
+        // Send completition
+        if(sigtermCheck == 0 && (endCheck && entryCheck)){
+            sigtermCheck = 1;
+            MPI_Send(&sigtermCheck, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        }
+        
+        cout << procId << " start node: " << startNode << " endcheck: " << endCheck << " startcheck: "<< entryCheck << " sigterm: "<<sigtermCheck <<  " visited:";
+        for (int i = 0; i < path.size(); i++) {
+            cout << path[i] << " - ";
+        }   
+        cout << endl;
+
+    }   
     
 
 
-
+    MPI_Finalize();
 
     
 }
