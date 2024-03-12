@@ -7,7 +7,7 @@
 #include <list>
 #include<cstdlib>
 
-#define N 20
+#define N 200
 #define entryNode 0
 #define endNode (N)-1
 
@@ -31,9 +31,9 @@ void initializeMatrix(int* data){
             } else {
                 data[i*N + j] = 0;
             }
-            cout << data[i*N + j];
+            //cout << data[i*N + j];
         }
-        cout << endl;
+        //cout << endl;
     }
 }
 
@@ -58,6 +58,8 @@ int main(int argc, char *argv[]){
 
     if(procId == 0){
 
+        // SETUP
+
         //Maybe its better to choose in a more sparse way
         int starters[procsCount];
         for(int i = 0; i<procsCount; i++){
@@ -80,30 +82,34 @@ int main(int argc, char *argv[]){
         initializeMatrix(graph);
         MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
 
-
         entryCheck = true;
 
         // BFS COMPUTATION
         vector<int> path;
         vector<bool> visited;
-        for (int i = 0; i < N; i++)
-            visited.push_back(false);
-
         list<int> nodeQueue;
 
+        for (int i = 0; i < N; i++)
+            visited.push_back(false);
         visited[startNode] = true;
         nodeQueue.push_back(startNode);
-
-        list<int>::iterator i;
 
         MPI_Request request;
         MPI_Irecv(&sigtermCheck, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &request); 
         
         while (!endCheck) {
 
-            if(sigtermCheck){
-                break;
-            }  
+            MPI_Status status;
+            int flag;
+            MPI_Test(&request, &flag, &status);
+            if (flag) {
+                cout << procId <<" Sigterm recved" << status.MPI_SOURCE <<endl;
+                if(sigtermCheck){
+                    break;
+                }  
+            }
+
+            // Penso di dover testare la ricezione
 
             if(nodeQueue.empty()){
                 break;
@@ -132,10 +138,8 @@ int main(int argc, char *argv[]){
         }
 
         //Send completition
-        if(endCheck){
-            sigtermCheck = 1;
-            MPI_Bcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        }
+        sigtermCheck = 1;
+        MPI_Bcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
         cout << procId << " start node: " << startNode << " endcheck: " << endCheck << " startcheck: "<< entryCheck << " visited:";
         for (int i = 0; i < path.size(); i++) {
@@ -176,9 +180,15 @@ int main(int argc, char *argv[]){
         
         while (!endCheck || !entryCheck) {
 
-            if(sigtermCheck){
-                break;
-            }  
+            MPI_Status status;
+            int flag;
+            MPI_Test(&request, &flag, &status);
+            if (flag) {
+                cout << procId <<" Sigterm recved" << status.MPI_SOURCE <<endl;
+                if(sigtermCheck){
+                    break;
+                }  
+            } 
 
             if(nodeQueue.empty()){
                 break;
