@@ -46,9 +46,10 @@ int main(int argc, char *argv[]){
     int procId;
     MPI_Comm_size(MPI_COMM_WORLD, &procsCount);
     MPI_Comm_rank(MPI_COMM_WORLD, &procId);
+    int batchCount = (N/procsCount);
 
     int graph[N*N];
-    int myGraph[(N/procsCount)*N];
+    int myGraph[batchCount*N];
 
     int startNode;
     bool entryCheck = false;
@@ -83,8 +84,6 @@ int main(int argc, char *argv[]){
         initializeMatrix(graph);
 
         //MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
-
-        int batchCount = (N/procsCount);
         MPI_Scatter(graph, batchCount*N, MPI_INT, myGraph, batchCount*N, MPI_INT, 0, MPI_COMM_WORLD);
 
         // BFS COMPUTATION
@@ -103,6 +102,13 @@ int main(int argc, char *argv[]){
         MPI_Request request;
         MPI_Irecv(&sigtermCheck, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &request); 
         
+
+        MPI_Status statusHandler;
+        int flagHandler;
+        MPI_Request requestHandler;
+        int vertex = 0;
+        MPI_Irecv(&vertex, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &requestHandler);
+
         while (!endCheck) {
 
             MPI_Test(&request, &flag, &status);
@@ -113,6 +119,15 @@ int main(int argc, char *argv[]){
                 }  
             }
 
+            MPI_Test(&requestHandler, &flagHandler, &statusHandler);
+            if(flagHandler){
+                int localVertex = vertex - (procId * batchCount);
+                MPI_Request tempReq;
+                MPI_Isend(&myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, &tempReq);
+                MPI_Irecv(&vertex, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &requestHandler);
+                flagHandler = 0;
+            }
+
             if(nodeQueue.empty()){
                 break;
             }
@@ -121,14 +136,15 @@ int main(int argc, char *argv[]){
             nodeQueue.pop_front();
 
 
-            int procHandler = floor(currVertex/batchCount)
+            int procHandler = floor(currVertex/batchCount);
             //Compute the process that handles the batch
             int* sharedLine;
+            MPI_Status tempStatus;
             if(procHandler != procId){
                 sharedLine = new int[N];
-                
+            
                 MPI_Send(&currVertex, 1, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
-                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD, &tempStatus);
             }
 
             path.push_back(currVertex);
@@ -155,6 +171,13 @@ int main(int argc, char *argv[]){
         //Send completition
         sigtermCheck = 1;
         MPI_Ibcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD, &request);
+
+        MPI_Test(&requestHandler, &flagHandler, &statusHandler);
+        if(flagHandler){
+            int localVertex = vertex - (procId * batchCount);
+            MPI_Request tempReq;
+            MPI_Isend(&myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, &tempReq);
+        }
 
         cout << procId << " start node: " << startNode << " [end-entry] = [" << endCheck << "-"<< entryCheck << "]" <<  " visited: ";
         for (int i = 0; i < path.size(); i++) {
@@ -195,7 +218,7 @@ int main(int argc, char *argv[]){
         int flagHandler;
         MPI_Request requestHandler;
         int vertex = 0;
-        MPI_Irecv(&sig, 1, MPI_INT, MPI_ANY_SOURCE, MPI_COMM_WORLD, &request);
+        MPI_Irecv(&vertex, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &requestHandler);
 
         int checkPass = -1; 
         
@@ -209,10 +232,13 @@ int main(int argc, char *argv[]){
                 }  
             } 
 
-            MPI_Test(&requestHandler, &flagHandler, &statusHandler)
+            MPI_Test(&requestHandler, &flagHandler, &statusHandler);
             if(flagHandler){
                 int localVertex = vertex - (procId * batchCount);
-                MPI_Isend(myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, nullptr);
+                MPI_Request tempReq;
+                MPI_Isend(&myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, &tempReq);
+                MPI_Irecv(&vertex, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &requestHandler);
+                flagHandler = 0;
             }
 
             if(nodeQueue.empty()){
@@ -228,14 +254,15 @@ int main(int argc, char *argv[]){
                 nodeQueue.pop_front();
             }
 
-            int procHandler = floor(currVertex/batchCount)
+            int procHandler = floor(currVertex/batchCount);
             //Compute the process that handles the batch
             int* sharedLine;
+            MPI_Status tempStatus;
             if(procHandler != procId){
                 sharedLine = new int[N];
                 
                 MPI_Send(&currVertex, 1, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
-                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD, &tempStatus);
             }
 
             path.push_back(currVertex);
@@ -286,6 +313,13 @@ int main(int argc, char *argv[]){
             if(flag){
                 cout << "[SIGNAL]["<<procId<<"]  EXTERNAL STOP FROM "<< status.MPI_SOURCE <<" RECEVED" << endl;
             }
+        }
+
+        MPI_Test(&requestHandler, &flagHandler, &statusHandler);
+        if(flagHandler){
+            int localVertex = vertex - (procId * batchCount);
+            MPI_Request tempReq;
+            MPI_Isend(&myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, &tempReq);
         }
 
         // PRINT STATUS
