@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <iostream>
 #include <map>
+#include <math.h>
 #include <mpi.h>
 #include <vector>
 #include <random>
@@ -12,8 +13,6 @@
 #define endNode (N)-1
 
 using namespace std;
-
-
 // NOTES
 /*
 - it is possible to parallelize the cicles with OpenMP? (if not, using CUDA)
@@ -49,6 +48,7 @@ int main(int argc, char *argv[]){
     MPI_Comm_rank(MPI_COMM_WORLD, &procId);
 
     int graph[N*N];
+    int myGraph[(N/procsCount)*N];
 
     int startNode;
     bool entryCheck = false;
@@ -78,8 +78,14 @@ int main(int argc, char *argv[]){
         //Send Entry Nodes
         MPI_Scatter(starters, 1, MPI_INT, &startNode, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+
+        //Send Scattered Matrix
         initializeMatrix(graph);
-        MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
+
+        //MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
+
+        int batchCount = (N/procsCount);
+        MPI_Scatter(graph, batchCount*N, MPI_INT, myGraph, batchCount*N, MPI_INT, 0, MPI_COMM_WORLD);
 
         // BFS COMPUTATION
         vector<int> path;
@@ -107,14 +113,23 @@ int main(int argc, char *argv[]){
                 }  
             }
 
-            // Penso di dover testare la ricezione
-
             if(nodeQueue.empty()){
                 break;
             }
 
             int currVertex = nodeQueue.front();
             nodeQueue.pop_front();
+
+
+            int procHandler = floor(currVertex/batchCount)
+            //Compute the process that handles the batch
+            int* sharedLine;
+            if(procHandler != procId){
+                sharedLine = new int[N];
+                
+                MPI_Send(&currVertex, 1, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+            }
 
             path.push_back(currVertex);
 
@@ -133,6 +148,8 @@ int main(int argc, char *argv[]){
                     nodeQueue.push_back(i);
                 }
             }
+
+            delete [] sharedLine;
         }
 
         //Send completition
@@ -156,7 +173,8 @@ int main(int argc, char *argv[]){
         }
 
         // Recv the matrix
-        MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
+        //MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Scatter(nullptr, 1, MPI_INT, myGraph, batchCount*N, MPI_INT, 0, MPI_COMM_WORLD);
 
         // BFS Computation
         vector<int> path;
@@ -172,6 +190,12 @@ int main(int argc, char *argv[]){
         int flag;
         MPI_Request request;
         MPI_Ibcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD, &request); 
+        
+        MPI_Status statusHandler;
+        int flagHandler;
+        MPI_Request requestHandler;
+        int vertex = 0;
+        MPI_Irecv(&sig, 1, MPI_INT, MPI_ANY_SOURCE, MPI_COMM_WORLD, &request);
 
         int checkPass = -1; 
         
@@ -184,6 +208,12 @@ int main(int argc, char *argv[]){
                     break;
                 }  
             } 
+
+            MPI_Test(&requestHandler, &flagHandler, &statusHandler)
+            if(flagHandler){
+                int localVertex = vertex - (procId * batchCount);
+                MPI_Isend(myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, nullptr);
+            }
 
             if(nodeQueue.empty()){
                 break;
@@ -198,7 +228,15 @@ int main(int argc, char *argv[]){
                 nodeQueue.pop_front();
             }
 
-            // Verifica solo quando lo seleziona, ha senso verificarlo quando lo trova?
+            int procHandler = floor(currVertex/batchCount)
+            //Compute the process that handles the batch
+            int* sharedLine;
+            if(procHandler != procId){
+                sharedLine = new int[N];
+                
+                MPI_Send(&currVertex, 1, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+            }
 
             path.push_back(currVertex);
 
