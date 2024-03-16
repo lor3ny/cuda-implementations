@@ -1,12 +1,14 @@
 #include <cstddef>
 #include <iostream>
+#include <map>
 #include <math.h>
 #include <mpi.h>
 #include <vector>
+#include <random>
 #include <list>
 #include<cstdlib>
 
-#define N 200
+#define N 500
 #define entryNode 0
 #define endNode (N)-1
 
@@ -23,7 +25,7 @@ void initializeMatrix(int* data){
     for(int i = 0; i<N; i++){
         for(int j = 0; j<N; j++){
             int random = 0 + (rand() % 10);
-            if(random < 1){
+            if(random == 0){
                 data[i*N + j] = 1;
             } else {
                 data[i*N + j] = 0;
@@ -38,7 +40,6 @@ void initializeMatrix(int* data){
 
 int main(int argc, char *argv[]){
     
-
     MPI_Init(&argc, &argv);
 
     int procsCount;
@@ -85,8 +86,6 @@ int main(int argc, char *argv[]){
         //MPI_Bcast(graph, N*N, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Scatter(graph, batchCount*N, MPI_INT, myGraph, batchCount*N, MPI_INT, 0, MPI_COMM_WORLD);
 
-        entryCheck = true;
-
         // BFS COMPUTATION
         vector<int> path;
         vector<bool> visited;
@@ -96,7 +95,10 @@ int main(int argc, char *argv[]){
             visited.push_back(false);
         visited[startNode] = true;
         nodeQueue.push_back(startNode);
+        entryCheck = true;
 
+        MPI_Status status;
+        int flag;
         MPI_Request request;
         MPI_Irecv(&sigtermCheck, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &request); 
         
@@ -109,11 +111,9 @@ int main(int argc, char *argv[]){
 
         while (!endCheck) {
 
-            MPI_Status status;
-            int flag;
             MPI_Test(&request, &flag, &status);
             if (flag) {
-                cout << procId <<" Sigterm recved" << status.MPI_SOURCE <<endl;
+                cout <<"[SIGNAL]["<<procId<<"] INTERNAL STOP FROM "<< status.MPI_SOURCE <<" RECEVED" << endl;
                 if(sigtermCheck){
                     break;
                 }  
@@ -170,11 +170,18 @@ int main(int argc, char *argv[]){
 
         //Send completition
         sigtermCheck = 1;
-        MPI_Bcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Ibcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD, &request);
 
-        cout << procId << " start node: " << startNode << " endcheck: " << endCheck << " startcheck: "<< entryCheck << " visited:";
+        MPI_Test(&requestHandler, &flagHandler, &statusHandler);
+        if(flagHandler){
+            int localVertex = vertex - (procId * batchCount);
+            MPI_Request tempReq;
+            MPI_Isend(&myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, &tempReq);
+        }
+
+        cout << procId << " start node: " << startNode << " [end-entry] = [" << endCheck << "-"<< entryCheck << "]" <<  " visited: ";
         for (int i = 0; i < path.size(); i++) {
-            cout << path[i] << " - ";
+            cout << path[i] << "-";
         }   
         cout << endl;
 
@@ -195,16 +202,15 @@ int main(int argc, char *argv[]){
         // BFS Computation
         vector<int> path;
         vector<bool> visited;
-        for (int i = 0; i < N; i++)
-            visited.push_back(false);
-
         list<int> nodeQueue;
 
+        for (int i = 0; i < N; i++)
+            visited.push_back(false);
         visited[startNode] = true;
         nodeQueue.push_back(startNode);
 
-        list<int>::iterator i;
-
+        MPI_Status status;
+        int flag;
         MPI_Request request;
         MPI_Ibcast(&sigtermCheck, 1, MPI_INT, 0, MPI_COMM_WORLD, &request); 
         
@@ -218,11 +224,9 @@ int main(int argc, char *argv[]){
         
         while (!endCheck || !entryCheck) {
 
-            MPI_Status status;
-            int flag;
             MPI_Test(&request, &flag, &status);
             if (flag) {
-                cout << procId <<" Sigterm recved" << status.MPI_SOURCE <<endl;
+                cout << "[SIGNAL]["<<procId<<"] INTERNAL STOP FROM "<< status.MPI_SOURCE <<" RECEVED" << endl;
                 if(sigtermCheck){
                     break;
                 }  
@@ -241,7 +245,6 @@ int main(int argc, char *argv[]){
                 break;
             }
 
-
             int currVertex;
             if(checkPass != -1){
                 currVertex = checkPass;
@@ -251,8 +254,16 @@ int main(int argc, char *argv[]){
                 nodeQueue.pop_front();
             }
 
-
-            // Verifica solo quando lo seleziona, ha senso verificarlo quando lo trova?
+            int procHandler = floor(currVertex/batchCount);
+            //Compute the process that handles the batch
+            int* sharedLine;
+            MPI_Status tempStatus;
+            if(procHandler != procId){
+                sharedLine = new int[N];
+                
+                MPI_Send(&currVertex, 1, MPI_INT, procHandler, 0, MPI_COMM_WORLD);
+                MPI_Recv(sharedLine, N, MPI_INT, procHandler, 0, MPI_COMM_WORLD, &tempStatus);
+            }
 
             path.push_back(currVertex);
 
@@ -260,33 +271,28 @@ int main(int argc, char *argv[]){
 
                 int value = graph[currVertex*N + i];
 
-
-                if(i == endNode && value == 1){
+                if(i == endNode && value == 1 && !endCheck){
                     if(entryCheck){
                         endCheck = true;
-                        currVertex = i;
                         path.push_back(i);
                         break;
-                    } else {
-                        endCheck = true;
-                        visited[i] = true;
-                        checkPass = i;
-                        continue;
                     }
+                    endCheck = true;
+                    visited[i] = true;
+                    checkPass = i;
+                    continue;
                 }
 
-                if(i == entryNode && value == 1){
+                if(i == entryNode && value == 1 && !entryCheck){
                     if(endCheck){
                         entryCheck = true;
-                        currVertex = i;
                         path.push_back(i);
                         break;
-                    } else {
-                        entryCheck = true;
-                        visited[i] = true;
-                        checkPass = i;
-                        continue;
-                    }
+                    }   
+                    entryCheck = true;
+                    visited[i] = true;
+                    checkPass = i;
+                    continue;
                 }
 
                 if (value == 1 && !visited[i]) {
@@ -302,9 +308,24 @@ int main(int argc, char *argv[]){
             MPI_Send(&sigtermCheck, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
         }
         
-        cout << procId << " start node: " << startNode << " endcheck: " << endCheck << " startcheck: "<< entryCheck << " sigterm: "<<sigtermCheck <<  " visited:";
+        while(!flag){
+            MPI_Test(&request, &flag, &status);
+            if(flag){
+                cout << "[SIGNAL]["<<procId<<"]  EXTERNAL STOP FROM "<< status.MPI_SOURCE <<" RECEVED" << endl;
+            }
+        }
+
+        MPI_Test(&requestHandler, &flagHandler, &statusHandler);
+        if(flagHandler){
+            int localVertex = vertex - (procId * batchCount);
+            MPI_Request tempReq;
+            MPI_Isend(&myGraph[localVertex], N, MPI_INT, statusHandler.MPI_SOURCE, 0, MPI_COMM_WORLD, &tempReq);
+        }
+
+        // PRINT STATUS
+        cout << procId << " start node: " << startNode << " [end-entry] = [" << endCheck << "-"<< entryCheck << "]" <<  " visited: ";
         for (int i = 0; i < path.size(); i++) {
-            cout << path[i] << " - ";
+            cout << path[i] << "-";
         }   
         cout << endl;
 
