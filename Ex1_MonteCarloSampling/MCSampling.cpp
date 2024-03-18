@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <mpi.h>
+#include <ostream>
 #include <random>
 #include <iostream>
 #include <set>
@@ -27,85 +28,57 @@ int main(int argc, char *argv[]){
 
 
     if(id==0){
+        random_device rd;
+        mt19937 gen(rd());
 
         set<float> unique_numbers; //No repetitions
         
         int n = N;
-        int batchSize = (N)/size;
+        int batchSize = (N)/(size-1);
         MPI_Bcast(&batchSize, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-        float value;
-        while(unique_numbers.size() < N){
-            MPI_Status tmpStatus;
-            
-            cout << "start " << (N)-unique_numbers.size() << endl;
 
-            MPI_Recv(&value, 1, MPI_FLOAT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &tmpStatus);
+        // Con Iprobe e' possibile rendere questo processo lavoratore
 
-            cout << "end" << endl; 
+        MPI_Status status;
+        int counter = 0;
+        do {
+            MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+            int ret;
+            MPI_Recv(&ret, 1, MPI_FLOAT, status.MPI_SOURCE, status.MPI_TAG, MPI_COMM_WORLD, &status);
 
-            unique_numbers.insert(value);
-
-            if(value<0){
-                int remains;
-                if(size>((N)-unique_numbers.size())){
-                    remains = size;
-                } else {
-                    remains = ((N)-unique_numbers.size())/size;
-                }
-                MPI_Send(&remains, 1, MPI_INT, tmpStatus.MPI_SOURCE, 0, MPI_COMM_WORLD);
+            if(ret == -1){
+                counter++;
+            } else {
+                unique_numbers.insert(ret);
             }
-        }
-        cout << id << endl; 
+            
+        } while (counter < size-1);
+    
+        cout << "I'm " << id << endl;
 
-
-        for(int i = 0; i<size; i++){
-            MPI_Status tmpStatus;
-            float ret;
-            MPI_Recv(&ret, 1, MPI_FLOAT, i, 0, MPI_COMM_WORLD, &tmpStatus);
-        }
+        cout << unique_numbers.size() << endl;
 
         MPI_Barrier(MPI_COMM_WORLD);
         
-        
-        cout << "Result: " << unique_numbers.size() << endl;
-        /*
-        for (set<float>::iterator i = unique_numbers.begin(); i != unique_numbers.end(); i++) {
-            float element = *i;
-            cout << element << ",";
-        }
-        */
-
     } else {
 
         random_device rd;
         mt19937 gen(rd());
 
-        int bound;
+        int batchN;
 
-        MPI_Bcast(&bound, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-        cout << "RECEVEID: " << bound << endl; 
+        MPI_Bcast(&batchN, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
         int counter = 0;
-        while(counter < bound){
-            for(int i = 0; i<bound; ++i){
-                float rand_n = ((float) uniform_int_distribution<int>(0,2000)(gen))/1000;
-                MPI_Send(&rand_n, 1, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
-            }
-
-            MPI_Status status;
-            float askValue= -0.1;
-
-            cout << "REQUEST FROM: " << id << endl; 
-
-            MPI_Send(&askValue, 1, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
-            bound = 0;
-            counter = 0;
-            MPI_Recv(&bound, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
-
-            cout << id << " RECEIVED BOUND: " << bound << endl; 
+        while(counter < batchN){
+            float rand_n = ((float) uniform_int_distribution<int>(0,2000)(gen));
+            MPI_Send(&rand_n, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+            counter++;
         }
+
+        int ending = -1;
+        MPI_Send(&ending, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
 
         cout << "I'm " << id << endl;
 
