@@ -6,12 +6,9 @@
 #include <iostream>
 #include <unordered_set>
 
-#define N 1<<14
+#define N 1<<18
 
-
-// We can't select a cardinality greater than 2^19 because the
-// array is to big. Solutions: scatter the array
-
+// on laptop from 19 included crashes, let's see on pc and cluster
 
 using namespace std;
 
@@ -20,16 +17,6 @@ struct Coords {
     int y;
     char location;
 };
-
-bool linearSearch(const Coords arr[], int n, Coords target) {
-  for (int i = 0; i < n; ++i) {
-    if (arr[i].x == target.x && arr[i].y == target.y) {
-      return true; // Target found at index i
-    }
-  }
-  return false; // Target not found
-}
-
 
 int main(int argc, char *argv[]){
     
@@ -57,17 +44,15 @@ int main(int argc, char *argv[]){
     if(id==0){
         random_device rd;
         mt19937 gen(rd());
-
-        Coords s_coords[N];
-        vector<Coords> c_coords; 
         
         int n = N;
-        int batchSize = (N)/(size-1);
+        int batchSize = (N)/(size);
 
         // Con Iprobe e' possibile rendere questo processo lavoratore
 
         MPI_Status status;
-        int s_points = 0;
+        long long s_points = 0;
+        long long c_points = 0;
         while(s_points < n){
             int counter = 0;
 
@@ -94,15 +79,10 @@ int main(int argc, char *argv[]){
                     if(ret.x == -1){
                         counter++;
                     } else if(s_points < n) {
-
-                        // Verify presence, in case abort
-                        int alreadyExists = linearSearch(s_coords, N, ret);
-                        if(!alreadyExists){
-                            s_coords[s_points];
-                            s_points++;
-                            if(ret.location == 'C')
-                                c_coords.push_back(ret);
-                        }
+                        s_points++;
+                        if(ret.location == 'C')
+                            c_points++;
+                        
                     }
                     flag = !flag;
                 }
@@ -116,20 +96,11 @@ int main(int argc, char *argv[]){
                 rand_coord.x = (uniform_int_distribution<int>(-1000,1000)(gen));
                 rand_coord.y = (uniform_int_distribution<int>(-1000,1000)(gen));
 
-
-                // Verify presence, in case abort
-                int alreadyExists = linearSearch(s_coords, N, rand_coord);
-                    if(!alreadyExists){
-                        cout << sqrt(pow((float)rand_coord.x, 2) + pow(rand_coord.y, 2)) << endl;
-                    if(sqrt(pow((float)rand_coord.x, 2) + pow(rand_coord.y, 2)) < 1000){
-                        rand_coord.location = 'C';
-                        c_coords.push_back(rand_coord);
-                    } else {
-                        rand_coord.location = 'S';
-                    }
-                    s_coords[s_points];
-                    s_points++;
+                
+                if(sqrt(pow(rand_coord.x, 2) + pow(rand_coord.y, 2)) < 1000){
+                    c_points++;
                 }
+                s_points++;
                 
                 batchCounter++;
 
@@ -149,7 +120,8 @@ int main(int argc, char *argv[]){
         MPI_Barrier(MPI_COMM_WORLD);
 
         cout << "TOTAL POINTS: " << s_points << endl;
-        cout << "APPROXIMATED PI: " << (float)s_points/(float)c_coords.size() << endl;
+        cout << "CIRCLE POINTS: " << c_points << endl;
+        cout << "APPROXIMATED PI: " << 4*((float)c_points/(float)s_points) << endl;
         
     } else {
 
