@@ -1,4 +1,4 @@
-# cuda-parallel_search
+# Parallel implementations
 Parallel programming with CUDA, MPI and OpenMP for HPC applications.
 
 
